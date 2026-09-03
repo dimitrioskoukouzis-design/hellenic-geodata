@@ -79,14 +79,48 @@ function resetResults(){availableCard.classList.add('hidden');unavailableCard.cl
 function checkAvailability(geom){if(!coverage){selectionText.textContent='Loading dataset index…';setTimeout(()=>checkAvailability(geom),250);return;}const selected={type:'Feature',properties:{},geometry:geom};const hit=turf.booleanIntersects(selected,coverage);availableCard.classList.toggle('hidden',!hit);deliverables.classList.toggle('hidden',!hit);unavailableCard.classList.toggle('hidden',hit);}
 function setPolygonSelection(layer){if(clickMarker){map.removeLayer(clickMarker);clickMarker=null;}selectionType='polygon';selectionGeometry=layer.toGeoJSON().geometry;const ll=outerRing(layer);const xy=toEgsa(ll);selectedArea=planarAreaXY(xy);selectionEgsa={type:'Polygon',coordinates:[xy.concat([xy[0]])]};area.textContent=(selectedArea/1000).toLocaleString('el-GR',{minimumFractionDigits:3,maximumFractionDigits:3})+' στρέμματα';selectionText.textContent=selectedArea.toLocaleString('el-GR',{minimumFractionDigits:2,maximumFractionDigits:2})+' m² • measurement in GGRS87 / EPSG:2100';checkAvailability(selectionGeometry);}
 function setPointSelection(latlng){drawn.clearLayers();if(clickMarker)map.removeLayer(clickMarker);clickMarker=L.circleMarker(latlng,{radius:7,weight:2,color:'#fff',fillColor:'#68cbe3',fillOpacity:1}).addTo(map);selectionType='point';selectionGeometry={type:'Point',coordinates:[latlng.lng,latlng.lat]};selectionEgsa={type:'Point',coordinates:proj4('EPSG:4326','EPSG:2100',[latlng.lng,latlng.lat])};selectedArea=0;area.textContent='Location selected';selectionText.textContent=`${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;checkAvailability(selectionGeometry);}
-map.on(L.Draw.Event.CREATED,e=>{drawn.clearLayers();drawn.addLayer(e.layer);setPolygonSelection(e.layer);});
-map.on(L.Draw.Event.EDITED,e=>e.layers.eachLayer(setPolygonSelection));
-map.on(L.Draw.Event.DELETED,()=>{selectionGeometry=null;selectionEgsa=null;selectedArea=0;selectionType=null;area.textContent='—';selectionText.textContent='Click the map or draw an area.';resetResults();});
-map.on('click',e=>{if(document.querySelector('.leaflet-draw-draw-polygon.leaflet-draw-toolbar-button-enabled,.leaflet-draw-draw-rectangle.leaflet-draw-toolbar-button-enabled'))return;setPointSelection(e.latlng);});
 
-function openModal(kind){modal.classList.add('on');modalTitle.textContent=kind==='survey'?'Request a new drone survey':'Request engineering data quote';summary.textContent=kind==='survey'?'Send us the selected location and project requirements.':(selectionType==='polygon'?`${selectedArea.toLocaleString('el-GR',{maximumFractionDigits:2})} m² selected • Full-resolution Orthomosaic`:'Selected location • Full-resolution Orthomosaic');modal.dataset.kind=kind;result.textContent='';}
-quote.onclick=()=>openModal('data');surveyBtn.onclick=()=>openModal('survey');close.onclick=()=>modal.classList.remove('on');
-send.onclick=()=>{const payload={request_type:modal.dataset.kind,dataset:modal.dataset.kind==='data'?'CG-NAX-0001':null,name:name.value,email:email.value,notes:notes.value,area_m2:selectedArea||null,geometry_wgs84:selectionGeometry,geometry_epsg2100:selectionEgsa,deliverables:modal.dataset.kind==='data'&&ortho.checked?['orthomosaic_geotiff']:[]};console.log('Cyclades GeoData request',payload);result.textContent='Request payload prepared. Backend submission will be connected in the production version.';};
+map.on('click',e=>setPointSelection(e.latlng));
+map.on(L.Draw.Event.DRAWSTART,()=>{if(clickMarker){map.removeLayer(clickMarker);clickMarker=null;}resetResults();});
+map.on(L.Draw.Event.CREATED,e=>{drawn.clearLayers();drawn.addLayer(e.layer);setPolygonSelection(e.layer);});
+map.on(L.Draw.Event.EDITED,e=>e.layers.eachLayer(layer=>setPolygonSelection(layer)));
+map.on(L.Draw.Event.DELETED,()=>{selectionGeometry=null;selectionEgsa=null;selectedArea=0;selectionType=null;area.textContent='—';selectionText.textContent='Click the map or draw an area.';resetResults();});
+
+const modalEl=document.getElementById('modal');
+const modalTitleEl=document.getElementById('modalTitle');
+const summaryEl=document.getElementById('summary');
+const resultEl=document.getElementById('result');
+const quoteBtn=document.getElementById('quote');
+const surveyBtnEl=document.getElementById('surveyBtn');
+const closeBtn=document.getElementById('close');
+const sendBtn=document.getElementById('send');
+const nameInput=document.getElementById('name');
+const emailInput=document.getElementById('email');
+const notesInput=document.getElementById('notes');
+
+function openRequest(kind){
+  modalEl.dataset.kind=kind;
+  modalTitleEl.textContent=kind==='survey'?'Request a new drone survey':'Request data quote';
+  summaryEl.textContent=kind==='survey'
+    ? (selectionType==='polygon'?`${selectedArea.toLocaleString('el-GR',{minimumFractionDigits:2,maximumFractionDigits:2})} m² selected area`:'Selected map location')
+    : (selectionType==='polygon'?`CG-NAX-0001 • ${selectedArea.toLocaleString('el-GR',{minimumFractionDigits:2,maximumFractionDigits:2})} m² • Full-resolution Orthomosaic`:'CG-NAX-0001 • selected location • Full-resolution Orthomosaic');
+  resultEl.textContent='';
+  modalEl.classList.add('on');
+}
+quoteBtn.addEventListener('click',()=>openRequest('data'));
+surveyBtnEl.addEventListener('click',()=>openRequest('survey'));
+closeBtn.addEventListener('click',()=>modalEl.classList.remove('on'));
+modalEl.addEventListener('click',e=>{if(e.target===modalEl)modalEl.classList.remove('on');});
+sendBtn.addEventListener('click',()=>{
+  if(!nameInput.value.trim()||!emailInput.value.trim()){
+    resultEl.textContent='Please enter your name/company and email.';
+    return;
+  }
+  const isSurvey=modalEl.dataset.kind==='survey';
+  const payload={request_type:isSurvey?'new_drone_survey':'existing_dataset_quote',dataset:isSurvey?null:'CG-NAX-0001',name:nameInput.value.trim(),email:emailInput.value.trim(),notes:notesInput.value.trim(),area_m2:selectedArea?Number(selectedArea.toFixed(2)):null,deliverables:isSurvey?[]:['Full-resolution Orthomosaic GeoTIFF'],geometry_wgs84:selectionGeometry,geometry_epsg2100:selectionEgsa};
+  resultEl.textContent='Request prepared successfully.';
+  console.log('CYCLADES_GEODATA_REQUEST',payload);
+});
 </script>
 </body>
 </html>
